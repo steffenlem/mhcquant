@@ -37,6 +37,7 @@ process OPENMS_COMETADAPTER {
             -database $fasta \\
             -threads $task.cpus \\
             -pin_out ${prefix}_pin.tsv \\
+            -max_peptide_length 60 \\
             $params_file \\
             $args \\
             $mods \\
