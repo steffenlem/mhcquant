@@ -91,17 +91,6 @@ include { OPENMS_MZTABEXPORTER }                                            from
 //
 include { INPUT_CHECK } from '../subworkflows/local/input_check'
 
-/*
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    IMPORT NF-CORE MODULES/SUBWORKFLOWS
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-*/
-
-//
-// MODULE: Installed directly from nf-core/modules
-//
-include { MULTIQC                     } from '../modules/nf-core/multiqc/main'
-include { CUSTOM_DUMPSOFTWAREVERSIONS } from '../modules/nf-core/custom/dumpsoftwareversions/main'
 
 /*
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -127,9 +116,6 @@ workflow MHCQUANT {
 
     ch_versions = Channel.empty()
 
-    //
-    // SUBWORKFLOW: Check the input file
-    //
     INPUT_CHECK (
         file(params.input)
     )
@@ -147,125 +133,27 @@ workflow MHCQUANT {
                     return [ meta.subMap('id', 'sample', 'condition'), filename ]
                 tdf : meta.ext == 'd'
                     return [ meta.subMap('id', 'sample', 'condition'), filename ]
+                idxml : meta.ext == 'idxml'
+                    return [ meta.subMap('id', 'sample', 'condition'), filename ]
                 other : true }
         .set { branched_ms_files }
-
-    // Input fasta file
-    Channel.fromPath(params.fasta)
-        .map{ fasta -> [[id:fasta.getBaseName()], fasta] }
-        .ifEmpty { error ("params.fasta was empty - no input file supplied") }
-        .set { fasta_file }
-
-    //
-    // SUBWORKFLOW: Include protein information
-    //
-    // TODO: Temporary disabled because of outdated vcf parsing
-    //if (params.include_proteins_from_vcf) {
-    //    // Include the proteins from the vcf file to the fasta file
-    //    INCLUDE_PROTEINS(fasta_file)
-    //    ch_versions = ch_versions.mix(INCLUDE_PROTEINS.out.versions)
-    //    ch_fasta_file = INCLUDE_PROTEINS.out.ch_fasta_file
-    //    ch_vcf_from_sheet = INCLUDE_PROTEINS.out.ch_vcf_from_sheet
-    //} else {
-    //    ch_fasta_file = fasta_file
-    //    ch_vcf_from_sheet = Channel.empty()
-    //}
-    if (!params.skip_decoy_generation) {
-        // Generate reversed decoy database
-        OPENMS_DECOYDATABASE(fasta_file)
-        ch_versions = ch_versions.mix(OPENMS_DECOYDATABASE.out.versions)
-        ch_decoy_db = OPENMS_DECOYDATABASE.out.decoy
-                                .map{ meta, fasta -> [fasta] }
-    } else {
-        ch_decoy_db = fasta_file.map{ meta, fasta -> [fasta] }
-    }
-
-    // If mzml files are specified, they are encapsulated in a list [meta, [mzml]]. We need to extract the path for grouping later
-    ch_ms_files = branched_ms_files.mzml.map{ meta, mzml -> [meta, mzml[0]]}
-    // Raw file conversion
-    THERMORAWFILEPARSER(branched_ms_files.raw)
-    ch_versions = ch_versions.mix(THERMORAWFILEPARSER.out.versions.ifEmpty(null))
-    ch_ms_files = ch_ms_files.mix(THERMORAWFILEPARSER.out.mzml)
-
-    // timsTOF data conversion
-    TDF2MZML(branched_ms_files.tdf)
-    ch_versions = ch_versions.mix(TDF2MZML.out.versions.ifEmpty(null))
-    ch_ms_files = ch_ms_files.mix(TDF2MZML.out.mzml)
-
-    // Optional: Run Peak Picking as Preprocessing
-    if (params.run_centroidisation) {
-        OPENMS_PEAKPICKERHIRES(ch_ms_files)
-        ch_versions = ch_versions.mix(OPENMS_PEAKPICKERHIRES.out.versions.ifEmpty(null))
-        ch_mzml_file = OPENMS_PEAKPICKERHIRES.out.mzml
-    } else {
-        ch_mzml_file = ch_ms_files
-    }
-
-    // Optionally clean up mzML files
-    if (params.filter_mzml){
-        OPENMS_FILEFILTER(ch_mzml_file)
-        ch_versions = ch_versions.mix(OPENMS_FILEFILTER.out.versions.ifEmpty(null))
-        ch_clean_mzml_file = OPENMS_FILEFILTER.out.cleaned_mzml
-    } else {
-        ch_clean_mzml_file = ch_mzml_file
-    }
-
-    // Run comet database search
-    // TODO: Fix accordingly with vcf parsing
-    //if (params.include_proteins_from_vcf) {
-    //    OPENMS_COMETADAPTER(ch_clean_mzml_file.join(ch_decoy_db, remainder:true))
-    //} else {
-    //    OPENMS_COMETADAPTER(ch_clean_mzml_file.combine(ch_fasta_file.map{ meta, fasta -> [fasta] }))
-    //}
-    OPENMS_COMETADAPTER(ch_clean_mzml_file.combine(ch_decoy_db))
-    ch_versions = ch_versions.mix(OPENMS_COMETADAPTER.out.versions)
-
-    // Index decoy and target hits
-    OPENMS_PEPTIDEINDEXER(OPENMS_COMETADAPTER.out.idxml.combine(ch_decoy_db))
-    ch_versions = ch_versions.mix(OPENMS_PEPTIDEINDEXER.out.versions.ifEmpty(null))
-
-    // Save indexed runs for later use to keep meta-run information. Sort based on file id
-    OPENMS_PEPTIDEINDEXER.out.idxml
-            .map { meta, idxml -> [[id: meta.sample + '_' + meta.condition], meta] }
-            .groupTuple( sort: sortById )
-            .set { merge_meta_map }
-
-    OPENMS_PEPTIDEINDEXER.out.idxml
-            .map { meta, idxml -> [[id: meta.sample + '_' + meta.condition], idxml] }
-            .groupTuple()
-            .set { ch_runs_to_merge }
+    
+    ch_ms_files = branched_ms_files.idxml.map{ meta, idxml -> [[id: meta.sample + '_' + meta.condition], idxml[0]]}.groupTuple()
 
     // Merge aligned idXMLfiles
-    OPENMS_IDMERGER(ch_runs_to_merge)
+    OPENMS_IDMERGER(ch_ms_files)
     ch_versions = ch_versions.mix(OPENMS_IDMERGER.out.versions.ifEmpty(null))
 
-    // Run MS2Rescore
-    ch_clean_mzml_file
-            .map { meta, mzml -> [[id: meta.sample + '_' + meta.condition], mzml] }
-            .groupTuple()
-            .join(OPENMS_IDMERGER.out.idxml)
-            .map { meta, mzml, idxml -> [meta, idxml, mzml, []] }
-            .set { ch_ms2rescore_in }
-
-    MS2RESCORE(ch_ms2rescore_in)
-    ch_versions = ch_versions.mix(MS2RESCORE.out.versions)
 
     if (params.rescoring_engine == 'percolator') {
-        // TODO: Find a way to parse the feature names of ms2rescore and plug them into the feature extractor
-        // Extract PSM features for Percolator
-        OPENMS_PSMFEATUREEXTRACTOR(MS2RESCORE.out.idxml
-                                        .join(MS2RESCORE.out.feature_names))
-        ch_versions = ch_versions.mix(OPENMS_PSMFEATUREEXTRACTOR.out.versions.ifEmpty(null))
-
         // Run Percolator
-        OPENMS_PERCOLATORADAPTER(OPENMS_PSMFEATUREEXTRACTOR.out.idxml)
+        OPENMS_PERCOLATORADAPTER(OPENMS_IDMERGER.out.idxml)
         ch_versions = ch_versions.mix(OPENMS_PERCOLATORADAPTER.out.versions.ifEmpty(null))
         ch_rescored_runs = OPENMS_PERCOLATORADAPTER.out.idxml
     } else {
         log.warn "The rescoring engine is set to mokapot. This rescoring engine currently only supports psm-level-fdr via ms2rescore."
         // TODO: remove whitelist argument from idscoreswitcher
-        OPENMS_IDSCORESWITCHER(MS2RESCORE.out.idxml
-                                    .map { meta, idxml -> [meta, idxml, []] })
+        OPENMS_IDSCORESWITCHER(OPENMS_IDMERGER.out.idxml)
         ch_rescored_runs = OPENMS_IDSCORESWITCHER.out.switched_idxml.map { tuple -> tuple.findAll { it != [] }}
     }
 
@@ -311,83 +199,6 @@ workflow MHCQUANT {
         meta, tsv -> if (tsv.size() < 130) {
         log.warn "It seems that there were no significant hits found for this sample: " + meta.sample + "\nPlease consider incrementing the '--fdr_threshold' after removing the work directory or to exclude this sample. "
         }
-    }
-
-    OPENMS_MZTABEXPORTER(ch_output)
-    ch_versions = ch_versions.mix(OPENMS_MZTABEXPORTER.out.versions.ifEmpty(null))
-
-    //
-    // SUBWORKFLOW: Predict class I (neoepitopes)
-    //
-    if (params.predict_class_1 & !params.skip_quantification) {
-        PREDICT_CLASS1 (
-            OPENMS_MZTABEXPORTER.out.mztab,
-            peptides_class_1_alleles,
-            ch_vcf_from_sheet
-        )
-        ch_versions = ch_versions.mix(PREDICT_CLASS1.out.versions.ifEmpty(null))
-        ch_predicted_possible_neoepitopes = PREDICT_CLASS1.out.ch_predicted_possible_neoepitopes
-    } else {
-        ch_predicted_possible_neoepitopes = Channel.empty()
-    }
-
-    //
-    // SUBWORKFLOW: Predict class II (neoepitopes)
-    //
-    if (params.predict_class_2 & !params.skip_quantification) {
-        PREDICT_CLASS2 (
-            OPENMS_MZTABEXPORTER.out.mztab,
-            peptides_class_2_alleles,
-            ch_vcf_from_sheet
-        )
-        ch_versions = ch_versions.mix(PREDICT_CLASS2.out.versions.ifEmpty(null))
-        ch_predicted_possible_neoepitopes_II = PREDICT_CLASS2.out.ch_predicted_possible_neoepitopes
-    } else {
-        ch_predicted_possible_neoepitopes_II = Channel.empty()
-    }
-
-    if (params.annotate_ions) {
-        // Join the ch_filtered_idxml and the ch_mzml_file
-        ch_clean_mzml_file.map { meta, mzml -> [[id: meta.sample + '_' + meta.condition], mzml] }
-            .groupTuple()
-            .join(filter_q_value)
-            .set{ ch_ion_annotator_input }
-
-        // Annotate spectra with ion fragmentation information
-        PYOPENMS_IONANNOTATOR( ch_ion_annotator_input )
-        ch_versions = ch_versions.mix(PYOPENMS_IONANNOTATOR.out.versions.ifEmpty(null))
-    }
-
-    //
-    // MODULE: Pipeline reporting
-    //
-    CUSTOM_DUMPSOFTWAREVERSIONS (
-        ch_versions.unique().collectFile(name: 'collated_versions.yml')
-    )
-
-    //
-    // MODULE: MultiQC
-    //
-    if (!params.skip_multiqc) {
-        workflow_summary = WorkflowMhcquant.paramsSummaryMultiqc(workflow, summary_params)
-        ch_workflow_summary = Channel.value(workflow_summary)
-
-    methods_description    = WorkflowMhcquant.methodsDescriptionText(workflow, ch_multiqc_custom_methods_description, params)
-    ch_methods_description = Channel.value(methods_description)
-
-        ch_multiqc_files = Channel.empty()
-        ch_multiqc_files = ch_multiqc_files.mix(ch_workflow_summary.collectFile(name: 'workflow_summary_mqc.yaml'))
-        ch_multiqc_files = ch_multiqc_files.mix(ch_methods_description.collectFile(name: 'methods_description_mqc.yaml'))
-        ch_multiqc_files = ch_multiqc_files.mix(CUSTOM_DUMPSOFTWAREVERSIONS.out.mqc_yml.collect())
-
-        MULTIQC (
-            ch_multiqc_files.collect(),
-            ch_multiqc_config.collect().ifEmpty([]),
-            ch_multiqc_custom_config.collect().ifEmpty([]),
-            ch_multiqc_logo.collect().ifEmpty([])
-        )
-        multiqc_report = MULTIQC.out.report.toList()
-        ch_versions    = ch_versions.mix(MULTIQC.out.versions)
     }
 
 }
