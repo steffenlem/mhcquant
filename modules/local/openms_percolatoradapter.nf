@@ -26,6 +26,7 @@ process OPENMS_PERCOLATORADAPTER {
         OMP_NUM_THREADS=$task.cpus \\
         PercolatorAdapter -in $merged_with_features \\
             -out ${prefix}.idXML \\
+            -verbose 5 \\
             $klammer \\
             $args
 
