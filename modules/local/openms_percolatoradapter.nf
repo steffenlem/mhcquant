@@ -27,6 +27,7 @@ process OPENMS_PERCOLATORADAPTER {
         PercolatorAdapter -in $merged_with_features \\
             -out ${prefix}.idXML \\
             -threads $task.cpus \\
+            -verbose 10 \\ 
             $klammer \\
             $args
 
