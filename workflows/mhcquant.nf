@@ -140,14 +140,9 @@ workflow MHCQUANT {
     
     ch_ms_files = branched_ms_files.idxml.map{ meta, idxml -> [[id: meta.sample + '_' + meta.condition], idxml[0]]}.groupTuple()
 
-    // Merge aligned idXMLfiles
-    OPENMS_IDMERGER(ch_ms_files)
-    ch_versions = ch_versions.mix(OPENMS_IDMERGER.out.versions.ifEmpty(null))
-
-
     if (params.rescoring_engine == 'percolator') {
         // Run Percolator
-        OPENMS_PERCOLATORADAPTER(OPENMS_IDMERGER.out.idxml)
+        OPENMS_PERCOLATORADAPTER(ch_ms_files)
         ch_versions = ch_versions.mix(OPENMS_PERCOLATORADAPTER.out.versions.ifEmpty(null))
         ch_rescored_runs = OPENMS_PERCOLATORADAPTER.out.idxml
     } else {
