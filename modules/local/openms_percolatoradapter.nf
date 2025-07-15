@@ -2,10 +2,10 @@ process OPENMS_PERCOLATORADAPTER {
     tag "$meta.id"
     label 'process_low'
 
-    conda "bioconda::openms-thirdparty=3.1.0"
+    conda "${moduleDir}/environment.yml"
     container "${ workflow.containerEngine == 'singularity' && !task.ext.singularity_pull_docker_container ?
-        'https://depot.galaxyproject.org/singularity/openms-thirdparty:3.1.0--h9ee0642_3' :
-        'biocontainers/openms-thirdparty:3.1.0--h9ee0642_3' }"
+        'https://depot.galaxyproject.org/singularity/openms-thirdparty:3.4.0--h9ee0642_0' :
+        'biocontainers/openms-thirdparty:3.4.0--h9ee0642_0' }"
 
     input:
         tuple val(meta), path(merged_with_features)
